@@ -16,7 +16,7 @@
  *
  *
  */
-package io.github.resilience4j.circuitbreaker.internal;
+package io.github.resilience4j.bitset;
 
 /**
  * A ring bit set which stores bits up to a maximum size of bits.
