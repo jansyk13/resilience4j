@@ -1,25 +1,8 @@
-/*
- *
- *  Copyright 2016 Robert Winkler
- *
- *  Licensed under the Apache License, Version 2.0 (the "License");
- *  you may not use this file except in compliance with the License.
- *  You may obtain a copy of the License at
- *
- *         http://www.apache.org/licenses/LICENSE-2.0
- *
- *  Unless required by applicable law or agreed to in writing, software
- *  distributed under the License is distributed on an "AS IS" BASIS,
- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  See the License for the specific language governing permissions and
- *  limitations under the License.
- *
- *
- */
 package io.github.resilience4j.retry.internal;
 
+import io.github.resilience4j.bitset.RingBitSet;
 import io.github.resilience4j.retry.Retry;
-import io.github.resilience4j.retry.RetryConfig;
+import io.github.resilience4j.retry.RetryBudgetConfig;
 import io.github.resilience4j.retry.event.RetryEvent;
 import io.github.resilience4j.retry.event.RetryOnErrorEvent;
 import io.github.resilience4j.retry.event.RetryOnIgnoredErrorEvent;
@@ -35,33 +18,43 @@ import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 
-public class RetryImpl implements Retry {
+public class RetryBudgetImpl implements Retry {
+
     private final Metrics metrics;
     private final RetryEventProcessor eventProcessor;
 
     private String name;
-    private RetryConfig config;
+    private RetryBudgetConfig config;
     private int maxAttempts;
     private Function<Integer, Long> intervalFunction;
     private Predicate<Throwable> exceptionPredicate;
+    private int bufferSize;
+    // to avoid integer division
+    private double _bufferSize;
+    private double retryThreshold;
     private LongAdder succeededAfterRetryCounter;
     private LongAdder failedAfterRetryCounter;
     private LongAdder succeededWithoutRetryCounter;
     private LongAdder failedWithoutRetryCounter;
     /*package*/ static CheckedConsumer<Long> sleepFunction = Thread::sleep;
+    private RingBitSet ringBitSet;
 
-    public RetryImpl(String name, RetryConfig config){
+    public RetryBudgetImpl(String name, RetryBudgetConfig config) {
         this.name = name;
         this.config = config;
         this.maxAttempts = config.getMaxAttempts();
         this.intervalFunction = config.getIntervalFunction();
         this.exceptionPredicate = config.getExceptionPredicate();
+        this.bufferSize = config.getBufferSize();
+        this._bufferSize = config.getBufferSize();
+        this.retryThreshold = config.getRetryThreshold();
         this.metrics = this.new RetryMetrics();
         this.eventProcessor = new RetryEventProcessor();
-        succeededAfterRetryCounter = new LongAdder();
-        failedAfterRetryCounter = new LongAdder();
-        succeededWithoutRetryCounter = new LongAdder();
-        failedWithoutRetryCounter = new LongAdder();
+        this.succeededAfterRetryCounter = new LongAdder();
+        this.failedAfterRetryCounter = new LongAdder();
+        this.succeededWithoutRetryCounter = new LongAdder();
+        this.failedWithoutRetryCounter = new LongAdder();
+        this.ringBitSet = new RingBitSet(bufferSize);
     }
 
     public final class ContextImpl implements Retry.Context {
@@ -75,31 +68,32 @@ public class RetryImpl implements Retry {
 
         public void onSuccess() {
             int currentNumOfAttempts = numOfAttempts.get();
-            if(currentNumOfAttempts > 0){
+            ringBitSet.setNextBit(false);
+            if (currentNumOfAttempts > 0) {
                 succeededAfterRetryCounter.increment();
                 Throwable throwable = Option.of(lastException.get()).getOrElse(lastRuntimeException.get());
                 publishRetryEvent(() -> new RetryOnSuccessEvent(getName(), currentNumOfAttempts, throwable));
-            }else{
+            } else {
                 succeededWithoutRetryCounter.increment();
             }
         }
 
-        public void onError(Exception exception) throws Throwable{
-            if(exceptionPredicate.test(exception)){
+        public void onError(Exception exception) throws Throwable {
+            if (exceptionPredicate.test(exception)) {
                 lastException.set(exception);
                 throwOrSleepAfterException();
-            }else{
+            } else {
                 failedWithoutRetryCounter.increment();
                 publishRetryEvent(() -> new RetryOnIgnoredErrorEvent(getName(), exception));
                 throw exception;
             }
         }
 
-        public void onRuntimeError(RuntimeException runtimeException){
-            if(exceptionPredicate.test(runtimeException)){
+        public void onRuntimeError(RuntimeException runtimeException) {
+            if (exceptionPredicate.test(runtimeException)) {
                 lastRuntimeException.set(runtimeException);
                 throwOrSleepAfterRuntimeException();
-            }else{
+            } else {
                 failedWithoutRetryCounter.increment();
                 publishRetryEvent(() -> new RetryOnIgnoredErrorEvent(getName(), runtimeException));
                 throw runtimeException;
@@ -108,25 +102,25 @@ public class RetryImpl implements Retry {
 
         private void throwOrSleepAfterException() throws Exception {
             int currentNumOfAttempts = numOfAttempts.incrementAndGet();
-            if(currentNumOfAttempts >= maxAttempts){
+            if (canRetry(currentNumOfAttempts)) {
+                waitIntervalAfterFailure();
+            } else {
                 failedAfterRetryCounter.increment();
                 Exception throwable = lastException.get();
                 publishRetryEvent(() -> new RetryOnErrorEvent(getName(), currentNumOfAttempts, throwable));
                 throw throwable;
-            }else{
-                waitIntervalAfterFailure();
             }
         }
 
-        private void throwOrSleepAfterRuntimeException(){
+        private void throwOrSleepAfterRuntimeException() {
             int currentNumOfAttempts = numOfAttempts.incrementAndGet();
-            if(currentNumOfAttempts >= maxAttempts){
+            if (canRetry(currentNumOfAttempts)) {
+                waitIntervalAfterFailure();
+            } else {
                 failedAfterRetryCounter.increment();
                 RuntimeException throwable = lastRuntimeException.get();
                 publishRetryEvent(() -> new RetryOnErrorEvent(getName(), currentNumOfAttempts, throwable));
                 throw throwable;
-            }else{
-                waitIntervalAfterFailure();
             }
         }
 
@@ -137,6 +131,19 @@ public class RetryImpl implements Retry {
                     .getOrElseThrow(ex -> lastRuntimeException.get());
         }
 
+        private boolean canRetry(final int currentNumOfAttempts) {
+            if (currentNumOfAttempts >= maxAttempts) {
+                return false;
+            }
+            synchronized (this) {
+                double retriesPct = ringBitSet.cardinality() / _bufferSize;
+                if (retriesPct >= retryThreshold) {
+                    return false;
+                }
+                ringBitSet.setNextBit(true);
+                return true;
+            }
+        }
     }
 
     /**
@@ -149,17 +156,17 @@ public class RetryImpl implements Retry {
 
     @Override
     public Context context() {
-        return new ContextImpl();
+        return new RetryBudgetImpl.ContextImpl();
     }
 
     @Override
-    public RetryConfig getConfig() {
+    public RetryBudgetConfig getConfig() {
         return config;
     }
 
 
     private void publishRetryEvent(Supplier<RetryEvent> event) {
-        if(eventProcessor.hasConsumers()) {
+        if (eventProcessor.hasConsumers()) {
             eventProcessor.consumeEvent(event.get());
         }
     }

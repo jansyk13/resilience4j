@@ -23,7 +23,7 @@ import java.time.Duration;
 import java.util.function.Function;
 import java.util.function.Predicate;
 
-public class RetryConfig {
+public class RetryConfig implements Config{
 
     public static final int DEFAULT_MAX_ATTEMPTS = 3;
     public static final long DEFAULT_WAIT_DURATION = 500;
@@ -40,14 +40,17 @@ public class RetryConfig {
     /**
      * @return the maximum allowed retries to make.
      */
+    @Override
     public int getMaxAttempts() {
         return maxAttempts;
     }
 
+    @Override
     public Function<Integer, Long> getIntervalFunction() {
         return intervalFunction;
     }
 
+    @Override
     public Predicate<Throwable> getExceptionPredicate() {
         return exceptionPredicate;
     }

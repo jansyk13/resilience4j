@@ -348,13 +348,13 @@ class Resilience4jModuleSpec extends Specification {
         retryRegistry.allRetries.size() == 2
         def test1 = retryRegistry.retry('test1')
         test1.name == 'test1'
-        test1.retryConfig.with {
+        test1.config.with {
             assert maxAttempts == 3
             it
         }
         def test2 = retryRegistry.retry('test2')
         test2.name == 'test2'
-        test2.retryConfig.with {
+        test2.config.with {
             assert maxAttempts == 3
             it
         }
@@ -422,13 +422,13 @@ class Resilience4jModuleSpec extends Specification {
         retryRegistry.allRetries.size() == 2
         def test1 = retryRegistry.retry('test1')
         test1.name == 'test1'
-        test1.retryConfig.with {
+        test1.config.with {
             assert maxAttempts == 3
             it
         }
         def test2 = retryRegistry.retry('test2')
         test2.name == 'test2'
-        test2.retryConfig.with {
+        test2.config.with {
             assert maxAttempts == 3
             it
         }

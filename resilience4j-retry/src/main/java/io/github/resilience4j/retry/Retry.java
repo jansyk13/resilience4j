@@ -53,11 +53,11 @@ public interface Retry {
     Retry.Context context();
 
     /**
-     * Returns the RetryConfig of this Retry.
+     * Returns the Config of this Retry.
      *
-     * @return the RetryConfig of this Retry
+     * @return the Config of this Retry
      */
-    RetryConfig getRetryConfig();
+    <T extends Config> T getConfig();
 
     /**
      * Returns an EventPublisher can be used to register event consumers.

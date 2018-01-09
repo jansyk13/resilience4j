@@ -61,7 +61,7 @@ public class RetryTransformer<T> implements FlowableTransformer<T, T>, Observabl
         return Flowable.fromPublisher(downstream -> {
             SubscriptionArbiter sa = new SubscriptionArbiter();
             downstream.onSubscribe(sa);
-            RetrySubscriber<T> repeatSubscriber = new RetrySubscriber<>(downstream, retry.getRetryConfig().getMaxAttempts(), sa, upstream, retry);
+            RetrySubscriber<T> repeatSubscriber = new RetrySubscriber<>(downstream, retry.getConfig().getMaxAttempts(), sa, upstream, retry);
             upstream.subscribe(repeatSubscriber);
         });
     }
@@ -72,7 +72,7 @@ public class RetryTransformer<T> implements FlowableTransformer<T, T>, Observabl
             Flowable<T> flowable = upstream.toFlowable(BackpressureStrategy.BUFFER);
             SubscriptionArbiter sa = new SubscriptionArbiter();
             downstream.onSubscribe(sa);
-            RetrySubscriber<T> retrySubscriber = new RetrySubscriber<>(downstream, retry.getRetryConfig().getMaxAttempts(), sa, flowable, retry);
+            RetrySubscriber<T> retrySubscriber = new RetrySubscriber<>(downstream, retry.getConfig().getMaxAttempts(), sa, flowable, retry);
             flowable.subscribe(retrySubscriber);
         });
     }
@@ -83,7 +83,7 @@ public class RetryTransformer<T> implements FlowableTransformer<T, T>, Observabl
             Flowable<T> flowable = upstream.toFlowable();
             SubscriptionArbiter sa = new SubscriptionArbiter();
             downstream.onSubscribe(sa);
-            RetrySubscriber<T> retrySubscriber = new RetrySubscriber<>(downstream, retry.getRetryConfig().getMaxAttempts(), sa, flowable, retry);
+            RetrySubscriber<T> retrySubscriber = new RetrySubscriber<>(downstream, retry.getConfig().getMaxAttempts(), sa, flowable, retry);
             flowable.subscribe(retrySubscriber);
         });
     }
